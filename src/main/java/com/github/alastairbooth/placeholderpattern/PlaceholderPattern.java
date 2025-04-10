@@ -5,7 +5,10 @@ import lombok.Getter;
 import lombok.NonNull;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -17,39 +20,71 @@ public class PlaceholderPattern {
     private static final String ANYTHING_IN_BRACES = "\\{[^{}]*\\}";
     private static final String BRACED_STRING = "^\\{.+\\}$";
     private static final String STARTS_WITH_VAR = "^\\{.*";
+    private static final String ANYTHING = ".*";
 
     private final String pattern;
-    private final UnaryOperator<String> nullReplacer;
     @Getter(AccessLevel.PRIVATE)
     private final boolean startsWithVar;
     private final List<String> keys;
     private final List<String> accompanyingText;
+    private final Map<String, String> keysRegex;
+    private final Pattern regex;
+    private UnaryOperator<String> nullReplacer;
     private List<String> workingKeys;
     private List<String> workingAccompanyingText;
 
     public PlaceholderPattern(String pattern) {
-        this(pattern, s -> {
-            throw new PlaceholderPatternException("null replacer has not been defined and is needed");
-        });
+        this(
+                pattern,
+                s -> {
+                    throw new PlaceholderPatternException("null replacer has not been defined and is needed");
+                    },
+                null
+        );
     }
 
-    public PlaceholderPattern(String pattern, UnaryOperator<String> nullReplacer) {
+    public PlaceholderPattern(String pattern, Map<String, String> keysRegex) {
+        this(
+                pattern,
+                s -> {
+                    throw new PlaceholderPatternException("null replacer has not been defined and is needed");
+                },
+                keysRegex
+        );
+    }
+
+    public PlaceholderPattern(String pattern, UnaryOperator<String> nullReplacer, Map<String, String> keysRegex) {
         this.pattern = pattern;
         this.nullReplacer = nullReplacer;
-        this.keys = allMatches(pattern, ANYTHING_IN_BRACES);
-        this.accompanyingText = allMatches(pattern, ANYTHING_NOT_IN_BRACES);
+        this.keys = getAllRegexMatches(pattern, ANYTHING_IN_BRACES);
+        this.accompanyingText = getAllRegexMatches(pattern, ANYTHING_NOT_IN_BRACES);
         this.workingKeys = new ArrayList<>(keys);
         this.workingAccompanyingText = new ArrayList<>(accompanyingText);
         this.startsWithVar = pattern.matches(STARTS_WITH_VAR);
+        this.keysRegex = Objects.requireNonNullElseGet(keysRegex, HashMap::new);
+        this.regex = Pattern.compile(withReplacements(keyValueArgs(this.keysRegex)).toString(s -> ANYTHING));
     }
 
-    private List<String> allMatches(String string, String regex) {
+    private String[] keyValueArgs(Map<String, String> map) {
+        List<String> list = new ArrayList<>();
+        map.forEach((string, string2) -> {
+            list.add(string);
+            list.add(string2);
+        });
+        return list.toArray(new String[list.size()]);
+    }
+
+    private List<String> getAllRegexMatches(String string, String regex) {
         List<String> matches = new ArrayList<>();
         Matcher m = Pattern.compile(regex).matcher(string);
         while (m.find()) {
             matches.add(m.group());
         }
         return matches;
+    }
+
+    public boolean matches(String string) {
+        return regex.matcher(string).matches();
     }
 
     public PlaceholderPattern withReplacements(String... replacements) {
@@ -103,6 +138,14 @@ public class PlaceholderPattern {
 
     private void validateWorkingKeys() {
         workingKeys = workingKeys.stream().map(this::validateForOutput).toList();
+    }
+
+    public String toString(UnaryOperator<String> nullReplacer) {
+        UnaryOperator<String> temp = this.nullReplacer;
+        this.nullReplacer = nullReplacer;
+        String output = this.toString();
+        this.nullReplacer = temp;
+        return output;
     }
 
     @Override
